@@ -1,0 +1,198 @@
+# version: '3.8'
+
+# services:
+#   zookeeper:
+#     image: wurstmeister/zookeeper
+#     container_name: zookeeper
+#     ports:
+#       - "2181:2181"
+
+#   kafka:
+#     image: wurstmeister/kafka
+#     container_name: kafka
+#     ports:
+#       - "9092:9092"
+#     environment:
+#       KAFKA_BROKER_ID: 1
+#       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+#       KAFKA_LISTENERS: INTERNAL://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092
+#       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9093,EXTERNAL://localhost:9092
+#       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+#       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+#       ALLOW_PLAINTEXT_LISTENER: "yes"
+#     depends_on:
+#       - zookeeper
+
+#   mongo:
+#     image: mongo
+#     container_name: mongo
+#     restart: always
+#     ports:
+#       - "27017:27017"
+#     volumes:
+#       - mongo-data:/data/db
+
+#   spark-master:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     container_name: spark-master
+#     environment:
+#       - SPARK_MODE=master
+#       - SPARK_RPC_AUTHENTICATION_ENABLED=no
+#       - SPARK_UI_PORT=4040
+#       - SPARK_JARS_PACKAGES=org.mongodb.spark:mongo-spark-connector_2.12:10.2.1
+#     ports:
+#       - "4040:8080"
+#       - "7077:7077"
+#     depends_on:
+#       - kafka
+#       - mongo
+#     volumes:
+#       - ./:/opt/news-sentimental
+
+#   spark-worker:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     container_name: spark-worker
+#     environment:
+#       - SPARK_MODE=worker
+#       - SPARK_MASTER_URL=spark://spark-master:7077
+#       - SPARK_RPC_AUTHENTICATION_ENABLED=no
+#       - SPARK_JARS_PACKAGES=org.mongodb.spark:mongo-spark-connector_2.12:10.2.1
+#     ports:
+#       - "8081:8081"
+#     depends_on:
+#       - spark-master
+#   producer:
+#     build: .
+#     container_name: producer
+#     command: python /opt/news-sentimental/producer/news_producer.py
+#     restart: on-failure
+#     depends_on:
+#       - kafka
+#     volumes:
+#       - ./:/opt/news-sentimental
+# volumes:
+#   mongo-data:
+
+
+
+
+version: '3.8'
+
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    networks:
+      - custom-network  # Attach to the custom network
+
+  kafka:
+    image: wurstmeister/kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9093,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    depends_on:
+      - zookeeper
+    networks:
+      - custom-network  # Attach to the custom network
+
+  mongo:
+    image: mongo
+    container_name: mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - custom-network  # Attach to the custom network
+
+  spark-master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_UI_PORT=4040
+      - SPARK_JARS_PACKAGES=org.mongodb.spark:mongo-spark-connector_2.12:10.2.1
+    ports:
+      - "4040:8080"
+      - "7077:7077"
+    depends_on:
+      - kafka
+      - mongo
+    volumes:
+      - ./:/opt/news-sentimental
+    networks:
+      - custom-network  # Attach to the custom network
+
+  spark-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_JARS_PACKAGES=org.mongodb.spark:mongo-spark-connector_2.12:10.2.1
+    ports:
+      - "8081:8081"
+    depends_on:
+      - spark-master
+    networks:
+      - custom-network  # Attach to the custom network
+
+  producer:
+    build: .
+    container_name: producer
+    command: python /opt/news-sentimental/producer/news_producer.py
+    restart: on-failure
+    depends_on:
+      - kafka
+    volumes:
+      - ./:/opt/news-sentimental
+    networks:
+      - custom-network  # Attach to the custom network
+
+  spark-submit:
+    build: .
+    container_name: spark-submit
+    restart: on-failure # Restarts if it fails (e.g., Spark master not ready)
+    depends_on:
+      - spark-worker # Waits for the worker (and thus master) to be up
+      - kafka
+      - mongo
+    volumes:
+      - ./:/opt/news-sentimental
+    # This is your working spark-submit command
+    command: >
+      /opt/bitnami/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.13:3.5.0,org.mongodb.spark:mongo-spark-connector_2.13:10.3.0
+      --conf "spark.mongodb.output.uri=mongodb://mongo:27017/newsdb.sentiments"
+      /opt/news-sentimental/spark/sentiment_stream.py
+    networks:
+      - custom-network  # Attach to the custom network
+
+volumes:
+  mongo-data:
+
+networks:
+  custom-network:  # Define a custom network
+    driver: bridge
